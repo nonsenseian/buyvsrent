@@ -144,10 +144,10 @@
                         </div>
                         <div class="pt-2 border-t dark:border-darkBorder">
                             <label class="block text-sm font-medium mb-1 flex justify-between">
-                                <span>401k Pre-tax (%)</span>
-                                <span id="b401kLabel" class="text-xs text-blue-600 font-bold"></span>
+                                <span>401k Pre-tax</span>
+                                <span id="b401kLabel" class="text-xs text-blue-600 font-bold">$0 (0%)</span>
                             </label>
-                            <input type="range" id="b401kPct" min="0" max="100" value="0" class="w-full" oninput="calculate()">
+                            <input type="range" id="b401kPct" min="0" max="100" value="0" class="w-full accent-blue-500 cursor-pointer" oninput="calculate()">
                         </div>
                         <div id="buyerLeftover" class="p-3 bg-gray-100 dark:bg-gray-800 rounded font-semibold text-center mt-2">
                             Estimated Leftover Cash: $0 / mo
@@ -191,10 +191,10 @@
                         </div>
                         <div class="pt-2 border-t dark:border-darkBorder">
                             <label class="block text-sm font-medium mb-1 flex justify-between">
-                                <span>401k Pre-tax (%)</span>
-                                <span id="r401kLabel" class="text-xs text-purple-600 font-bold"></span>
+                                <span>401k Pre-tax</span>
+                                <span id="r401kLabel" class="text-xs text-purple-600 font-bold">$0 (0%)</span>
                             </label>
-                            <input type="range" id="r401kPct" min="0" max="100" value="20" class="w-full" oninput="calculate()">
+                            <input type="range" id="r401kPct" min="0" max="100" value="0" class="w-full accent-purple-500 cursor-pointer" oninput="calculate()">
                         </div>
                         <div id="renterLeftover" class="p-3 bg-gray-100 dark:bg-gray-800 rounded font-semibold text-center mt-2">
                             Estimated Leftover Cash: $0 / mo
@@ -346,6 +346,11 @@
             let inflation = parseFloat(document.getElementById('inflation').value) / 100;
             let exp = parseFloat(document.getElementById('expenses').value) || 0;
 
+            // 401k Dynamic Max Lock & Label Formatting
+            let base401kLimit = status === 'joint' ? 48000 : 24000;
+            let max401kPct = income > 0 ? Math.ceil((base401kLimit / income) * 100) : 100;
+            if (max401kPct > 100) max401kPct = 100;
+
             let price = parseFloat(document.getElementById('homePrice').value) || 0;
             let dpPct = parseFloat(document.getElementById('downPayment').value) / 100;
             let rate = parseFloat(document.getElementById('rate').value) / 100 / 12;
@@ -354,21 +359,52 @@
             let ins = parseFloat(document.getElementById('insurance').value) || 0;
             let hoa = parseFloat(document.getElementById('hoa').value) || 0;
             let apprec = parseFloat(document.getElementById('apprec').value) / 100 / 12;
-            let b401kPct = parseFloat(document.getElementById('b401kPct').value) / 100;
+
+            // Buyer 401k Slider
+            let bSlider = document.getElementById('b401kPct');
+            bSlider.max = max401kPct;
+            if (parseInt(bSlider.value) > max401kPct) bSlider.value = max401kPct;
+            let b401kPct = parseInt(bSlider.value) / 100;
+            let bYearContrib = Math.min(income * b401kPct, base401kLimit);
+            let bEffectivePct = income > 0 ? (bYearContrib / income) * 100 : 0;
+
+            let bLabel = document.getElementById('b401kLabel');
+            if (bYearContrib >= base401kLimit && base401kLimit > 0) {
+                bLabel.innerText = `$${bYearContrib.toLocaleString(undefined, {maximumFractionDigits:0})} (${bEffectivePct.toFixed(0)}%) (MAXED)`;
+                bLabel.className = "text-xs text-red-500 font-bold";
+            } else {
+                bLabel.innerText = `$${bYearContrib.toLocaleString(undefined, {maximumFractionDigits:0})} (${bEffectivePct.toFixed(0)}%)`;
+                bLabel.className = "text-xs text-blue-600 font-bold";
+            }
 
             let rent = parseFloat(document.getElementById('rent').value) || 0;
             let rInc = parseFloat(document.getElementById('rentInc').value) / 100;
             let apy = parseFloat(document.getElementById('apy').value) / 100 / 12;
             let initInv = parseFloat(document.getElementById('initInv').value) || 0;
             let mInv = parseFloat(document.getElementById('monthInv').value) || 0;
-            let r401kPct = parseFloat(document.getElementById('r401kPct').value) / 100;
+            
+            // Renter 401k Slider
+            let rSlider = document.getElementById('r401kPct');
+            rSlider.max = max401kPct;
+            if (parseInt(rSlider.value) > max401kPct) rSlider.value = max401kPct;
+            let r401kPct = parseInt(rSlider.value) / 100;
+            let rYearContrib = Math.min(income * r401kPct, base401kLimit);
+            let rEffectivePct = income > 0 ? (rYearContrib / income) * 100 : 0;
+
+            let rLabel = document.getElementById('r401kLabel');
+            if (rYearContrib >= base401kLimit && base401kLimit > 0) {
+                rLabel.innerText = `$${rYearContrib.toLocaleString(undefined, {maximumFractionDigits:0})} (${rEffectivePct.toFixed(0)}%) (MAXED)`;
+                rLabel.className = "text-xs text-red-500 font-bold";
+            } else {
+                rLabel.innerText = `$${rYearContrib.toLocaleString(undefined, {maximumFractionDigits:0})} (${rEffectivePct.toFixed(0)}%)`;
+                rLabel.className = "text-xs text-purple-600 font-bold";
+            }
 
             // Arrays & Analysis Trackers
             let bNetData = [], rNetData = [], bCostData = [], rCostData = [], labels = [];
             timelineData = [];
             window.breakevenIdx = -1;
             window.overtaker = null;
-            let initialLeader = null;
             
             let totalRentPaid = 0;
             let totalInterestPaid = 0;
@@ -384,20 +420,18 @@
             let pni = loan > 0 ? (loan * rate) / (1 - Math.pow(1 + rate, -360)) : 0;
             
             // Sunk closing costs immediately reduce starting wealth
-            let closingCostSunk = (parseFloat(document.getElementById('homePrice').value) || 0) * ((parseFloat(document.getElementById('closingCosts').value) || 0) / 100);
+            let closingCostSunk = price * ((parseFloat(document.getElementById('closingCosts').value) || 0) / 100);
             let bCash = -closingCostSunk, rCash = 0;
             let b401kBal = 0, r401kBal = 0;
             let rPort = initInv;
             let bMonthInv = parseFloat(document.getElementById('bMonthInv').value) || 0;
             let bPort = 0;
 
-            // Base 401k Limits
-            let base401kLimit = status === 'joint' ? 48000 : 24000;
-            
             // UI Setup for Month 1 display
             let t = calcTax(curIncome, status, state, 0);
             document.getElementById('takeHomeReadout').innerText = `Estimated Annual Take-Home: $${(curIncome - t.total).toLocaleString(undefined, {maximumFractionDigits:0})}`;
 
+            // THE 30-YEAR MATH LOOP
             for (let m = 1; m <= 360; m++) {
                 let yr = Math.floor((m - 1) / 12);
                 if (m > 1 && m % 12 === 1) {
@@ -411,16 +445,6 @@
                 let b401kContrib = Math.min(curIncome * b401kPct, cap401k);
                 let r401kContrib = Math.min(curIncome * r401kPct, cap401k);
 
-                if (m === 1) { // Update Labels for UI
-                    let bl = document.getElementById('b401kLabel');
-                    bl.innerText = b401kContrib >= cap401k ? `$${b401kContrib.toLocaleString(undefined,{maximumFractionDigits:0})} (MAXED)` : `$${b401kContrib.toLocaleString(undefined,{maximumFractionDigits:0})}`;
-                    bl.className = b401kContrib >= cap401k ? "text-xs text-red-500 font-bold" : "text-xs text-blue-600 font-bold";
-                    
-                    let rl = document.getElementById('r401kLabel');
-                    rl.innerText = r401kContrib >= cap401k ? `$${r401kContrib.toLocaleString(undefined,{maximumFractionDigits:0})} (MAXED)` : `$${r401kContrib.toLocaleString(undefined,{maximumFractionDigits:0})}`;
-                    rl.className = r401kContrib >= cap401k ? "text-xs text-red-500 font-bold" : "text-xs text-purple-600 font-bold";
-                }
-
                 // Monthly Net Pay
                 let bTaxes = calcTax(curIncome, status, state, b401kContrib);
                 let rTaxes = calcTax(curIncome, status, state, r401kContrib);
@@ -433,16 +457,16 @@
                 if (principal > loan) principal = loan;
                 loan -= principal;
 
-                // --- 28% RULE MAX HOME PRICE CALCULATION ---
-                let maxMonthlyBudget = (income / 12) * 0.28;
-                let amortFactor = rate > 0 ? rate / (1 - Math.pow(1 + rate, -360)) : 1/360;
-                let pmiFactor = dpPct < 0.2 ? ((1 - dpPct) * 0.005 / 12) : 0;
-                // Lender DTI looks at P&I + Taxes + Insurance + HOA + PMI (excludes maintenance)
-                let costPerDollar = ((1 - dpPct) * amortFactor) + pTax + pmiFactor; 
-                let maxHomePrice = Math.max(0, (maxMonthlyBudget - ins - hoa) / costPerDollar);
-                
-                document.getElementById('maxHomePriceRec').innerText = `Note: Based on your income of $${income.toLocaleString()}, we recommend the max home price to be $${maxHomePrice.toLocaleString(undefined, {maximumFractionDigits:0})}.`;
-                // -------------------------------------------
+                if (m === 1) {
+                    // --- 28% RULE MAX HOME PRICE CALCULATION ---
+                    let maxMonthlyBudget = (income / 12) * 0.28;
+                    let amortFactor = rate > 0 ? rate / (1 - Math.pow(1 + rate, -360)) : 1/360;
+                    let pmiFactor = dpPct < 0.2 ? ((1 - dpPct) * 0.005 / 12) : 0;
+                    let costPerDollar = ((1 - dpPct) * amortFactor) + pTax + pmiFactor; 
+                    let maxHomePrice = Math.max(0, (maxMonthlyBudget - ins - hoa) / costPerDollar);
+                    
+                    document.getElementById('maxHomePriceRec').innerText = `Note: Based on your income of $${income.toLocaleString()}, we recommend the max home price to be $${maxHomePrice.toLocaleString(undefined, {maximumFractionDigits:0})}.`;
+                }
                 
                 let curPTax = homeVal * pTax;
                 let curMaint = homeVal * maint;
@@ -459,7 +483,7 @@
                 totalRenterPrincipal += mInv + (r401kContrib / 12);
                 totalBuyerPrincipal += bMonthInv + (b401kContrib / 12);
 
-                // Leftover Cash Tracking (subtracts the extra investment)
+                // Leftover Cash Tracking
                 let bLeft = bNetM - curExp - bCostM - bMonthInv;
                 let rLeft = rNetM - curExp - rCostM;
                 bCash += bLeft; rCash += rLeft;
