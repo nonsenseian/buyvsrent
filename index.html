@@ -6,8 +6,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Rent vs. Buy Calculator</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="https://nonsenseian.github.io/global-components.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/echarts/dist/echarts.min.js"></script>
+    <script src="https://nonsenseian.github.io/global-components.js?v=2"></script>
     <script>
         tailwind.config = {
             darkMode: 'class',
@@ -26,11 +26,12 @@
         body { transition: background-color 0.3s ease, color 0.3s ease; }
         .input-field {
             width: 100%; padding: 0.5rem; border-radius: 0.375rem; border: 1px solid #D1D5DB;
-            background-color: #F9FAFB; color: #111827;
+            background-color: #F9FAFB; color: #111827; transition: all 0.2s ease;
         }
         .dark .input-field {
             background-color: #374151; border-color: #4B5563; color: #F3F4F6;
         }
+        .input-field:focus { outline: none; border-color: #3B82F6; box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.5); }
     </style>
 </head>
 <body class="bg-gray-50 text-gray-900 dark:bg-darkBg dark:text-gray-100 font-sans min-h-screen flex flex-col">
@@ -241,20 +242,32 @@
                             <p class="text-xl font-bold mt-1 text-blue-600 dark:text-blue-400" id="analysisBuyerApprec"></p>
                         </div>
                     </div>
+                    
+                    <div class="mt-6 border-t dark:border-darkBorder pt-4">
+                        <h2 class="text-lg font-bold mb-2">Breakeven Horizon</h2>
+                        <div id="breakevenGauge" class="w-full h-64"></div>
+                    </div>
                 </div>
                 
                 <!-- Wealth Chart -->
                 <div class="bg-white dark:bg-darkCard p-6 rounded-xl shadow-md border dark:border-darkBorder">
                     <h2 class="text-xl font-bold mb-2">Total Net Worth (30 Years)</h2>
-                    <p class="text-sm text-gray-500 dark:text-gray-400 mb-4">Calculates cumulative income + active assets (home equity/investments/401k) + uninvested cash - general expenses - total housing sunk costs. Hover for inflation-adjusted values!</p>
-                    <canvas id="wealthChart" height="120"></canvas>
+                    <p class="text-sm text-gray-500 dark:text-gray-400 mb-4">Calculates cumulative income + active assets (home equity/investments/401k) + uninvested cash - general expenses - total housing sunk costs.</p>
+                    <div id="wealthChart" class="w-full h-80"></div>
                 </div>
 
                 <!-- Monthly Cost Chart -->
                 <div class="bg-white dark:bg-darkCard p-6 rounded-xl shadow-md border dark:border-darkBorder">
                     <h2 class="text-xl font-bold mb-2">Monthly Housing Costs Over Time</h2>
                     <p class="text-sm text-gray-500 dark:text-gray-400 mb-4">While the mortgage P&I is fixed, total buyer costs rise as taxes and maintenance inflate. Rent rises based on yearly increase percentage.</p>
-                    <canvas id="costChart" height="100"></canvas>
+                    <div id="costChart" class="w-full h-80"></div>
+                </div>
+
+                <!-- Opportunity Cost Chart -->
+                <div class="bg-white dark:bg-darkCard p-6 rounded-xl shadow-md border dark:border-darkBorder">
+                    <h2 class="text-xl font-bold mb-2">Opportunity Cost of Home Equity vs Market</h2>
+                    <p class="text-sm text-gray-500 dark:text-gray-400 mb-4">Compares the Buyer's Home Equity (Home Value - Loan) against the Renter's pure Investment Portfolio.</p>
+                    <div id="oppCostChart" class="w-full h-80"></div>
                 </div>
 
                 <!-- Out of Pocket Timeline Slider -->
@@ -288,37 +301,11 @@
     </div>
 
     <script>
-        let wealthChart, costChart;
+        let wealthChart, costChart, oppCostChart, breakevenGauge;
         let timelineData = [];
 
         // State tax estimate map
         const stateTaxes = { 'AL': 0.04, 'CA': 0.08, 'FL': 0, 'NY': 0.06, 'TX': 0, 'WA': 0, 'OTHER': 0.05 };
-
-        // ChartJS Custom Plugin for Vertical Breakeven Line
-        const breakevenPlugin = {
-            id: 'breakevenLine',
-            afterDraw: (chart) => {
-                if (chart.config.options.plugins.breakevenLine && window.breakevenIdx > 0) {
-                    const ctx = chart.ctx;
-                    const xAxis = chart.scales.x;
-                    const yAxis = chart.scales.y;
-                    const x = xAxis.getPixelForValue(window.breakevenIdx);
-                    ctx.save();
-                    ctx.beginPath();
-                    ctx.moveTo(x, yAxis.top);
-                    ctx.lineTo(x, yAxis.bottom);
-                    ctx.lineWidth = 2;
-                    ctx.strokeStyle = '#22C55E';
-                    ctx.setLineDash([5, 5]);
-                    ctx.stroke();
-                    ctx.fillStyle = '#22C55E';
-                    ctx.font = '10px Arial';
-                    ctx.fillText('Breakeven', x + 5, yAxis.top + 10);
-                    ctx.restore();
-                }
-            }
-        };
-        Chart.register(breakevenPlugin);
 
         function calcTax(gross, status, state, preTax) {
             let taxable = Math.max(0, gross - preTax);
@@ -402,6 +389,7 @@
 
             // Arrays & Analysis Trackers
             let bNetData = [], rNetData = [], bCostData = [], rCostData = [], labels = [];
+            let bEqData = [], rInvData = [];
             timelineData = [];
             window.breakevenIdx = -1;
             window.overtaker = null;
@@ -540,6 +528,7 @@
 
                 bNetData.push(bNW); rNetData.push(rNW);
                 bCostData.push(bCostM); rCostData.push(rCostM - mInv);
+                bEqData.push(homeVal - loan); rInvData.push(rPort);
                 
                 labels.push(`M${m} (Yr ${(m/12).toFixed(1)})`);
 
@@ -605,81 +594,107 @@
             let bApprec = (homeVal - price) + (bPort + b401kBal) - totalBuyerPrincipal;
             document.getElementById('analysisBuyerApprec').innerText = `$${bApprec.toLocaleString(undefined, {maximumFractionDigits:0})}`;
 
-            drawCharts(labels, bNetData, rNetData, bCostData, rCostData, inflation);
+            drawCharts(labels, bNetData, rNetData, bCostData, rCostData, inflation, { bEq: bEqData, rInv: rInvData });
             updateTimeline();
         }
 
-        function drawCharts(labels, bNet, rNet, bCost, rCost, inf) {
-            let textColor = document.documentElement.classList.contains('dark') ? '#E5E7EB' : '#374151';
-            let gridColor = document.documentElement.classList.contains('dark') ? '#374151' : '#E5E7EB';
+        function drawCharts(labels, bNet, rNet, bCost, rCost, inf, oppCostData) {
+            let chartDom1 = document.getElementById('wealthChart');
+            let chartDom2 = document.getElementById('costChart');
+            let chartDom3 = document.getElementById('oppCostChart');
+            let chartDom4 = document.getElementById('breakevenGauge');
+
+            if (!wealthChart) wealthChart = echarts.init(chartDom1);
+            if (!costChart) costChart = echarts.init(chartDom2);
+            if (!oppCostChart) oppCostChart = echarts.init(chartDom3);
+            if (!breakevenGauge) breakevenGauge = echarts.init(chartDom4);
+
+            let isDark = document.documentElement.classList.contains('dark');
+            let textColor = isDark ? '#E5E7EB' : '#374151';
+            let gridColor = isDark ? '#374151' : '#E5E7EB';
 
             let commonOptions = {
-                responsive: true,
-                interaction: { mode: 'index', intersect: false },
-                scales: {
-                    x: { ticks: { maxTicksLimit: 15, color: textColor }, grid: { color: gridColor } },
-                    y: { ticks: { color: textColor, callback: v => '$' + (v/1000).toFixed(0) + 'k' }, grid: { color: gridColor } }
+                tooltip: { 
+                    trigger: 'axis',
+                    valueFormatter: (value) => '$' + (Math.ceil(value * 100) / 100).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})
                 },
-                plugins: { legend: { labels: { color: textColor } } }
+                xAxis: { type: 'category', data: labels, axisLabel: { color: textColor, hideOverlap: true }, axisTick: { alignWithLabel: true } },
+                yAxis: { type: 'value', axisLabel: { color: textColor, formatter: (v) => '$' + (v/1000) + 'k' }, splitLine: { lineStyle: { color: gridColor } } },
+                grid: { containLabel: true, left: '5%', right: '5%', bottom: '10%', top: '15%' }
             };
 
-            // Net Worth
-            if (wealthChart) wealthChart.destroy();
-            let nwCtx = document.getElementById('wealthChart').getContext('2d');
-            wealthChart = new Chart(nwCtx, {
-                type: 'line',
-                data: {
-                    labels,
-                    datasets: [
-                        { label: 'Buyer Net Worth', data: bNet, borderColor: '#3B82F6', backgroundColor: '#3B82F6', tension: 0.4 },
-                        { label: 'Renter Net Worth', data: rNet, borderColor: '#A855F7', backgroundColor: '#A855F7', tension: 0.4 }
-                    ]
-                },
-                options: {
-                    ...commonOptions,
-                    plugins: {
-                        ...commonOptions.plugins,
-                        breakevenLine: true,
-                        tooltip: {
-                            callbacks: {
-                                label: (ctx) => {
-                                    let v = ctx.raw;
-                                    let m = ctx.dataIndex + 1;
-                                    let real = v / Math.pow(1 + inf, m/12);
-                                    return `${ctx.dataset.label}: $${v.toLocaleString(undefined,{maximumFractionDigits:0})} (Inflation adj.: $${real.toLocaleString(undefined,{maximumFractionDigits:0})})`;
-                                }
-                            }
-                        }
+            // Wealth Chart
+            wealthChart.setOption({
+                ...commonOptions,
+                tooltip: {
+                    trigger: 'axis',
+                    formatter: function (params) {
+                        let tooltipStr = `<strong>${params[0].axisValueLabel}</strong><br/>`;
+                        params.forEach(param => {
+                            let m = param.dataIndex + 1;
+                            let v = param.value;
+                            let real = v / Math.pow(1 + inf, m/12);
+                            let vStr = '$' + (Math.ceil(v * 100) / 100).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
+                            let realStr = '$' + (Math.ceil(real * 100) / 100).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
+                            tooltipStr += `${param.marker} ${param.seriesName}: <span style="float:right;margin-left:20px"><b>${vStr}</b> <span style="font-size:0.85em;color:#888;">(Real: ${realStr})</span></span><br/>`;
+                        });
+                        return tooltipStr;
                     }
-                }
+                },
+                legend: { data: ['Buyer Net Worth', 'Renter Net Worth'], textStyle: { color: textColor } },
+                series: [
+                    { name: 'Buyer Net Worth', type: 'line', data: bNet, itemStyle: { color: '#3B82F6' }, smooth: true, symbol: 'none' },
+                    { name: 'Renter Net Worth', type: 'line', data: rNet, itemStyle: { color: '#A855F7' }, smooth: true, symbol: 'none' }
+                ]
             });
 
-            // Costs
-            if (costChart) costChart.destroy();
-            let cCtx = document.getElementById('costChart').getContext('2d');
-            costChart = new Chart(cCtx, {
-                type: 'line',
-                data: {
-                    labels,
-                    datasets: [
-                        { label: 'Buyer Out-of-Pocket', data: bCost, borderColor: '#3B82F6', backgroundColor: '#3B82F6', tension: 0.4 },
-                        { label: 'Renter Out-of-Pocket', data: rCost, borderColor: '#A855F7', backgroundColor: '#A855F7', tension: 0.4 }
-                    ]
-                },
-                options: {
-                    ...commonOptions,
-                    plugins: {
-                        ...commonOptions.plugins,
-                        tooltip: {
-                            callbacks: {
-                                label: (ctx) => {
-                                    let v = ctx.raw;
-                                    return `${ctx.dataset.label}: $${v.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
-                                }
-                            }
-                        }
+            // Cost Chart
+            costChart.setOption({
+                ...commonOptions,
+                legend: { data: ['Buyer Out-of-Pocket', 'Renter Out-of-Pocket'], textStyle: { color: textColor } },
+                yAxis: { type: 'value', axisLabel: { color: textColor, formatter: (v) => '$' + v }, splitLine: { lineStyle: { color: gridColor } } },
+                series: [
+                    { name: 'Buyer Out-of-Pocket', type: 'line', data: bCost, itemStyle: { color: '#3B82F6' }, smooth: true, symbol: 'none' },
+                    { name: 'Renter Out-of-Pocket', type: 'line', data: rCost, itemStyle: { color: '#A855F7' }, smooth: true, symbol: 'none' }
+                ]
+            });
+
+            // Opp Cost Chart
+            oppCostChart.setOption({
+                ...commonOptions,
+                legend: { data: ['Buyer Home Equity', 'Renter Investment Portfolio'], textStyle: { color: textColor } },
+                series: [
+                    { name: 'Buyer Home Equity', type: 'line', data: oppCostData.bEq, itemStyle: { color: '#10B981' }, smooth: true, symbol: 'none' },
+                    { name: 'Renter Investment Portfolio', type: 'line', data: oppCostData.rInv, itemStyle: { color: '#F59E0B' }, smooth: true, symbol: 'none' }
+                ]
+            });
+
+            // Breakeven Gauge
+            let gaugeValue = window.breakevenIdx === -1 ? 30 : window.breakevenIdx / 12;
+            let gaugeColor = window.breakevenIdx === -1 ? (window.overtaker === 'Buyer' ? '#3B82F6' : '#A855F7') : '#10B981';
+            let labelTitle = window.breakevenIdx === -1 ? 'Never' : 'Breakeven';
+            
+            breakevenGauge.setOption({
+                series: [
+                    {
+                        type: 'gauge',
+                        min: 0, max: 30,
+                        progress: { show: true, width: 18, itemStyle: { color: gaugeColor } },
+                        axisLine: { lineStyle: { width: 18 } },
+                        axisTick: { show: false },
+                        splitLine: { length: 15, lineStyle: { width: 2, color: isDark ? '#374151' : '#999' } },
+                        axisLabel: { distance: 25, color: textColor, fontSize: 10 },
+                        detail: {
+                            valueAnimation: true,
+                            formatter: window.breakevenIdx === -1 ? '30+ Yrs' : '{value} Yrs',
+                            color: textColor,
+                            fontSize: 24,
+                            fontWeight: 'bold'
+                        },
+                        data: [{ value: gaugeValue.toFixed(1), name: labelTitle }],
+                        title: { color: textColor, fontSize: 14, offsetCenter: [0, '60%'] }
                     }
-                }
+                ]
             });
         }
 
@@ -724,6 +739,16 @@
 
         // Init
         calculate();
+
+        // Theme Toggle Observer
+        const themeObserver = new MutationObserver((mutations) => {
+            mutations.forEach((mutation) => {
+                if (mutation.attributeName === 'class') {
+                    if (typeof calculate === 'function') calculate();
+                }
+            });
+        });
+        themeObserver.observe(document.documentElement, { attributes: true });
     </script>
 </body>
 </html>
