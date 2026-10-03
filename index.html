@@ -308,8 +308,9 @@
         const stateTaxes = { 'AL': 0.04, 'CA': 0.08, 'FL': 0, 'NY': 0.06, 'TX': 0, 'WA': 0, 'OTHER': 0.05 };
 
         function calcTax(gross, status, state, preTax) {
-            let taxable = Math.max(0, gross - preTax);
-            let fica = Math.min(taxable, 168600) * 0.0765 + Math.max(0, taxable - 168600) * 0.0145;
+            let fica = Math.min(gross, 168600) * 0.0765 + Math.max(0, gross - 168600) * 0.0145;
+            let stdDed = status === 'joint' ? 29200 : 14600;
+            let taxable = Math.max(0, gross - preTax - stdDed);
             let fed = 0;
             // Simplified 2024 brackets
             let brackets = status === 'joint' ? 
